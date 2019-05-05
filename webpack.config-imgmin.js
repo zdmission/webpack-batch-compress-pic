@@ -1,76 +1,104 @@
-const path = require("path");
-const WebpackShellPlugin = require('webpack-shell-plugin');
+const path = require('path');
+const glob = require('glob');
 
-const fs = require("fs");
-const glob = require("glob");
+// 保存图片数据
+const arrImg = [];
+glob.sync('./static/**/*.{png,jpeg,jpg,gif,svg,ico}').forEach(entry => {
+    arrImg.push(entry);
+});
 
-const writeIntoFile = async (filepath, str, callback) => {
-  await fs.writeFileSync(filepath, str, "utf8", callback);
+// 在webpack的处理流中操作文件
+function fileChunck(options) {
+    this.options = options;
+}
+
+fileChunck.prototype.apply = function (compiler) {
+    const delFileNameArr = this.options.del ? this.options.del : []; // 删除指定文件
+    const copyArr = this.options.copy ? this.options.copy : []; // 移动指定文件
+    compiler.hooks.emit
+        .tapAsync('fileChunck', function (compilation, callback) {
+            Object.keys(compilation.assets).filter((filePath) => {
+                /* 删除指定文件 */
+                if (delFileNameArr.length > 0) {
+                    const targetFilePathArr = filePath.split('?')[0].split('/'),
+                        targetFilePath = targetFilePathArr[targetFilePathArr.length - 1];
+                    if (delFileNameArr.indexOf(targetFilePath) >= 0) {
+                        delete compilation.assets[filePath];
+                    }
+                }
+
+                /* 复制指定文件 */
+                if (copyArr.length > 0) {
+                    copyArr.filter((obj) => {
+                        if (obj.from.indexOf('.html') != -1) {
+                            if (filePath === obj.from) {
+                                compilation.assets[obj.to] = compilation.assets[filePath];
+                            }
+                        } else {
+                            if (filePath.indexOf('.html') != -1 && filePath.indexOf(obj.from) != -1) {
+                                const targetStr = obj.to + filePath.replace(obj.from, '');
+                                compilation.assets[targetStr] = compilation.assets[filePath];
+                            }
+                        }
+                        return obj;
+                    });
+                }
+
+                return (filePath);
+            });
+            callback();
+        });
 };
-
-let str = '';
-const createAppJsonFile = function() {
-
-  glob.sync("./static/**/*.{png,jpeg,jpg,gif,svg,ico}").forEach(entry => {
-    str = str + `let A${Math.random().toString(36).substr(2)} = require('${entry}');`
-  });
-
-  writeIntoFile("./picmin.js", str, err => {
-    if (err) throw err;
-    console.log("文件已保存");
-  });
-};
-createAppJsonFile()
 
 module.exports = {
-  entry: { picmin: path.join(__dirname, "./picmin.js") },
-  context: path.resolve(__dirname, "./"),
-  mode: "production",
-  output: {
-    path: path.resolve(__dirname, "./dist"),
-    filename: "[name].js"
-  },
-  resolve: {
-    //后缀名
-    extensions: [".js", ".css", ".vue"]
-  },
-  module: {
-    rules: [
-      //image
-      {
-        test: /\.(png|jpe?g|gif|svg|ico)(\?.*)?$/,
-        use: [
-          {
-            loader: "url-loader",
-            options: {
-              limit: 5, // 小于5bit的图片自动转成base64格式，并且不会存在实体图片
-              name: "[path][name].[ext]?[hash:8]"
+    entry: arrImg,
+    context: path.resolve(__dirname, './'),
+    mode: 'production',
+    output: {
+        path: path.resolve(__dirname, './dist'),
+        filename: '[name].js'
+    },
+    resolve: {
+    // 后缀名
+        extensions: ['.js', '.css', '.vue']
+    },
+    module: {
+        rules: [
+            // image
+            {
+                test: /\.(png|jpe?g|gif|svg|ico)(\?.*)?$/,
+                use: [
+                    {
+                        loader: 'url-loader',
+                        options: {
+                            limit: 1, // 小于5bit的图片自动转成base64格式，并且不会存在实体图片
+                            name: '[path][name].[ext]?[hash:8]'
+                        }
+                    },
+                    {
+                        loader: 'image-webpack-loader',
+                        options: {
+                            gifsicle: {
+                                interlaced: false
+                            },
+                            optipng: {
+                                optimizationLevel: 7
+                            },
+                            pngquant: {
+                                quality: '65-90',
+                                speed: 4
+                            },
+                            mozjpeg: {
+                                progressive: true,
+                                quality: 65
+                            }
+                        }
+                    }
+                ]
             }
-          },
-          {
-            loader: "image-webpack-loader",
-            options: {
-              gifsicle: {
-                interlaced: false
-              },
-              optipng: {
-                optimizationLevel: 7
-              },
-              pngquant: {
-                quality: "65-90",
-                speed: 4
-              },
-              mozjpeg: {
-                progressive: true,
-                quality: 65
-              }
-            }
-          }
         ]
-      }
+    },
+    plugins: [
+        new fileChunck({del: ['main.js']})
     ]
-  },
-  plugins: [
-    new WebpackShellPlugin({ onBuildEnd:[`rm -rf ./picmin.js ./dist/picmin.js`]})
-  ]
 };
